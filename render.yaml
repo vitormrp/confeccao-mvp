@@ -1,0 +1,45 @@
+services:
+  # ---- Backend (.NET 9 minimal API) -----------------------------------------
+  - type: web
+    name: confeccao-backend
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      # DATABASE_URL is supplied by the Neon connection string. Set as a secret
+      # in the Render dashboard — do NOT commit it. The backend's
+      # ConnectionStringHelper transparently converts postgres:// URIs into
+      # Npgsql's key/value form.
+      - key: DATABASE_URL
+        sync: false
+      # Allow the frontend's public URL. Update if you rename the frontend
+      # service or attach a custom domain.
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://confeccao-frontend.onrender.com
+      # Flip to "true" once to populate a couple of demo orders, then back off.
+      - key: SEED_SAMPLE_DATA
+        value: "false"
+
+  # ---- Frontend (Next.js 15) ------------------------------------------------
+  - type: web
+    name: confeccao-frontend
+    runtime: docker
+    plan: free
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      # Browser → backend, baked into the client bundle at build time.
+      - key: NEXT_PUBLIC_API_URL
+        value: https://confeccao-backend.onrender.com
+      # SSR → backend. On Render this can stay public; private networking
+      # works too (http://confeccao-backend:8080) but the public URL keeps the
+      # backend "warm" via the same cold-start path the browser uses.
+      - key: INTERNAL_API_URL
+        value: https://confeccao-backend.onrender.com
