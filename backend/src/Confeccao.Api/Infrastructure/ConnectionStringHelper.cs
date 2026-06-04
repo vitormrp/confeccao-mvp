@@ -1,3 +1,5 @@
+using Npgsql;
+
 namespace Confeccao.Api.Infrastructure;
 
 /// <summary>
@@ -7,9 +9,12 @@ namespace Confeccao.Api.Infrastructure;
 /// unchanged.
 ///
 /// Accepts both <c>postgres://</c> and <c>postgresql://</c> schemes. Forces
-/// SSL on URI inputs because every managed provider requires it; falling back
-/// to <c>Trust Server Certificate=true</c> avoids chain-validation surprises
-/// when the runtime hasn't trusted Let's Encrypt's intermediates yet.
+/// SSL on URI inputs because every managed provider requires it.
+///
+/// Uses <see cref="NpgsqlConnectionStringBuilder"/> for the final assembly so
+/// special characters in the password (semicolons, equals signs, quotes —
+/// common in auto-generated provider passwords) get escaped correctly. The
+/// previous string-interpolated version broke on Neon's real passwords.
 /// </summary>
 public static class ConnectionStringHelper
 {
@@ -34,7 +39,15 @@ public static class ConnectionStringHelper
             throw new ArgumentException(
                 "Connection URI must include a host and a database name.", nameof(raw));
 
-        return $"Host={host};Port={port};Database={db};Username={user};Password={pass};" +
-               "Ssl Mode=Require;Trust Server Certificate=true";
+        var builder = new NpgsqlConnectionStringBuilder
+        {
+            Host = host,
+            Port = port,
+            Database = db,
+            Username = user,
+            Password = pass,
+            SslMode = SslMode.Require,
+        };
+        return builder.ConnectionString;
     }
 }

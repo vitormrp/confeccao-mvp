@@ -1,4 +1,5 @@
 using Confeccao.Api.Infrastructure;
+using Npgsql;
 
 namespace Confeccao.UnitTests;
 
@@ -15,31 +16,31 @@ public class ConnectionStringHelperTests
     public void Translates_postgres_uri_to_npgsql_format()
     {
         var raw = "postgres://alice:s3cret@db.example.com:5432/mydb";
-        var result = ConnectionStringHelper.Normalize(raw);
+        var builder = new NpgsqlConnectionStringBuilder(ConnectionStringHelper.Normalize(raw));
 
-        Assert.Contains("Host=db.example.com", result);
-        Assert.Contains("Port=5432", result);
-        Assert.Contains("Database=mydb", result);
-        Assert.Contains("Username=alice", result);
-        Assert.Contains("Password=s3cret", result);
-        Assert.Contains("Ssl Mode=Require", result);
-        Assert.Contains("Trust Server Certificate=true", result);
+        Assert.Equal("db.example.com", builder.Host);
+        Assert.Equal(5432, builder.Port);
+        Assert.Equal("mydb", builder.Database);
+        Assert.Equal("alice", builder.Username);
+        Assert.Equal("s3cret", builder.Password);
+        Assert.Equal(SslMode.Require, builder.SslMode);
     }
 
     [Fact]
     public void Accepts_postgresql_scheme()
     {
         var raw = "postgresql://u:p@host/db";
-        var result = ConnectionStringHelper.Normalize(raw);
-        Assert.Contains("Host=host", result);
-        Assert.Contains("Database=db", result);
+        var builder = new NpgsqlConnectionStringBuilder(ConnectionStringHelper.Normalize(raw));
+        Assert.Equal("host", builder.Host);
+        Assert.Equal("db", builder.Database);
     }
 
     [Fact]
     public void Defaults_port_to_5432_when_omitted()
     {
         var raw = "postgres://u:p@host/db";
-        Assert.Contains("Port=5432", ConnectionStringHelper.Normalize(raw));
+        var builder = new NpgsqlConnectionStringBuilder(ConnectionStringHelper.Normalize(raw));
+        Assert.Equal(5432, builder.Port);
     }
 
     [Fact]
@@ -48,10 +49,10 @@ public class ConnectionStringHelperTests
         // Neon's auto-generated passwords often contain special characters that
         // get percent-encoded in the URI.
         var raw = "postgres://my%2Buser:p%40ss%2Fword@host/db";
-        var result = ConnectionStringHelper.Normalize(raw);
+        var builder = new NpgsqlConnectionStringBuilder(ConnectionStringHelper.Normalize(raw));
 
-        Assert.Contains("Username=my+user", result);
-        Assert.Contains("Password=p@ss/word", result);
+        Assert.Equal("my+user", builder.Username);
+        Assert.Equal("p@ss/word", builder.Password);
     }
 
     [Fact]
@@ -61,12 +62,12 @@ public class ConnectionStringHelperTests
         // long random suffixes. We don't need to honor the query string — SSL is
         // forced unconditionally on URI inputs — but parsing shouldn't choke on it.
         var raw = "postgresql://confeccao_owner:abc123XYZ@ep-cool-name-12345.us-east-2.aws.neon.tech/confeccao?sslmode=require";
-        var result = ConnectionStringHelper.Normalize(raw);
+        var builder = new NpgsqlConnectionStringBuilder(ConnectionStringHelper.Normalize(raw));
 
-        Assert.Contains("Host=ep-cool-name-12345.us-east-2.aws.neon.tech", result);
-        Assert.Contains("Database=confeccao", result);
-        Assert.Contains("Username=confeccao_owner", result);
-        Assert.Contains("Ssl Mode=Require", result);
+        Assert.Equal("ep-cool-name-12345.us-east-2.aws.neon.tech", builder.Host);
+        Assert.Equal("confeccao", builder.Database);
+        Assert.Equal("confeccao_owner", builder.Username);
+        Assert.Equal(SslMode.Require, builder.SslMode);
     }
 
     [Fact]
@@ -82,5 +83,31 @@ public class ConnectionStringHelperTests
     public void Passes_through_blank_input_unchanged(string raw)
     {
         Assert.Equal(raw, ConnectionStringHelper.Normalize(raw));
+    }
+
+    [Theory]
+    // Real-world passwords from Postgres-as-a-service providers can contain any
+    // of these characters. The naive string-interpolated version of Normalize()
+    // crashed Npgsql's parser at runtime — these cases pin that fix.
+    [InlineData("abc;def")]
+    [InlineData("abc=def")]
+    [InlineData("abc'def")]
+    [InlineData("abc\"def")]
+    [InlineData("abc def")]
+    [InlineData("a;b=c'd\"e f")]
+    [InlineData("X4ad1y=NhDC8wXyZ+/abc;")]  // Neon-shaped: base64-ish with `;` thrown in
+    public void Result_is_parseable_by_npgsql_for_passwords_with_special_chars(string password)
+    {
+        var encoded = Uri.EscapeDataString(password);
+        var raw = $"postgres://owner:{encoded}@db.example.com/mydb";
+
+        var normalized = ConnectionStringHelper.Normalize(raw);
+
+        // Round-trip through Npgsql's parser — this is what crashed on Render.
+        var builder = new NpgsqlConnectionStringBuilder(normalized);
+        Assert.Equal("db.example.com", builder.Host);
+        Assert.Equal("mydb", builder.Database);
+        Assert.Equal("owner", builder.Username);
+        Assert.Equal(password, builder.Password);
     }
 }
